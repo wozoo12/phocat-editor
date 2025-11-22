@@ -1,0 +1,20 @@
+services:
+  # Dịch vụ chạy Backend
+  - type: web
+    name: phocat-backend-sang
+    env: node
+    plan: free
+    rootDir: ai-intern-helper/backend # Chỉ định thư mục chứa backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 10000
+
+  # Dịch vụ chạy Frontend (Web tĩnh)
+  - type: web
+    name: phocat-frontend-sang
+    env: static
+    plan: free
+    rootDir: ai-intern-helper/frontend # Chỉ định thư mục chứa frontend
+    staticPublishPath: ./ # Đường dẫn chứa file index.html
