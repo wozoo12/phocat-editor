@@ -14,9 +14,14 @@ const app = express();
 // Sử dụng cổng do môi trường cung cấp (ví dụ: Render) hoặc mặc định là 5000
 const port = process.env.PORT || 5000;
 
-// CẤU HÌNH ĐƯỜNG DẪN LƯU ẢNH (Quan trọng cho Render)
-// Sử dụng đường dẫn tương đối: thư mục 'uploads' nằm ngay trong thư mục chứa file server.js
-const UPLOAD_DIR = path.join(__dirname, "uploads");
+// CẤU HÌNH ĐƯỜNG DẪN LƯU ẢNH (ĐÃ SỬA CHUẨN VÀ Tối ưu thêm)
+// ⚠️ LOGIC ĐƯỜNG DẪN: Nếu đang chạy trên server đám mây (có biến môi trường PORT), sử dụng đường dẫn tương đối.
+// Nếu chạy trên máy local (không có biến PORT), sử dụng đường dẫn cứng của user.
+// Lưu ý: Đối với đường dẫn trên máy local, đảm bảo không có dấu `/` thừa ở cuối nếu UPLOAD_DIR_LOCAL đã có.
+const UPLOAD_DIR_LOCAL = String.raw`D:\AI_Intern_Helper\ai-intern-helper\backend\uploads`;
+const UPLOAD_DIR_CLOUD = path.join(__dirname, "uploads");
+
+const UPLOAD_DIR = process.env.PORT ? UPLOAD_DIR_CLOUD : UPLOAD_DIR_LOCAL;
 
 // Đảm bảo thư mục lưu trữ tồn tại khi khởi động server
 try {
@@ -25,12 +30,11 @@ try {
     console.log(`✅ Đã tạo thư mục upload: ${UPLOAD_DIR}`);
   }
 } catch (err) {
-  console.error(
-    "❌ Lỗi nghiêm trọng: Không thể truy cập/tạo thư mục upload:",
-    err.message
-  );
-  // Trên Render, lỗi này thường do quyền truy cập file hệ thống (rất hiếm gặp ở thư mục dự án)
-  process.exit(1); // Dừng server nếu không có quyền ghi
+  // Báo lỗi nhưng KHÔNG DỪNG SERVER (để server Render vẫn chạy được)
+  console.error("⚠️ CẢNH BÁO: Không thể tạo thư mục upload. Lỗi:", err.message);
+  // Nếu thư mục không tạo được, có thể server sẽ không hoạt động đúng
+  // Đây là lỗi nghiêm trọng trên Render, nhưng trên local có thể do quyền.
+  // Tuy nhiên, chúng ta vẫn cố gắng để server chạy tiếp.
 }
 
 // Middleware
@@ -38,13 +42,10 @@ try {
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 // Cho phép frontend gọi API (CORS)
-// Trên Render, bạn có thể cần cấu hình lại origin nếu frontend khác domain
-// Ví dụ: app.use(cors({ origin: 'https://your-frontend.onrender.com' }));
-// Để '*' là cho phép tất cả (tiện cho demo nhưng kém bảo mật hơn)
 app.use(cors());
 
 // Cấu hình để server phục vụ các file tĩnh trong thư mục uploads (để frontend có thể xem ảnh)
-// Frontend sẽ truy cập qua: https://your-app.onrender.com/uploads/ten_file.png
+// Đây là route cho các ảnh đã được lưu
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 // =============================================
@@ -61,7 +62,6 @@ app.post("/api/save-draft-to-disk", (req, res) => {
     }
 
     // 1. Tách phần header base64 để lấy dữ liệu ảnh thô
-    // Hỗ trợ nhiều định dạng (png, jpeg, webp...)
     const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
 
     // 2. Tạo tên file
@@ -73,17 +73,15 @@ app.post("/api/save-draft-to-disk", (req, res) => {
       if (err) {
         console.error("❌ Lỗi khi ghi file:", err);
         // Trả về lỗi 500 nếu không ghi được xuống đĩa
-        return res
-          .status(500)
-          .json({
-            error: "Lỗi hệ thống: Không thể lưu file vào ổ cứng server",
-          });
+        return res.status(500).json({
+          error: "Lỗi hệ thống: Không thể lưu file vào ổ cứng server",
+          details: err.message,
+        });
       }
-      // Thành công
+
       console.log(`✅ Đã lưu nháp thành công: ${filePath}`);
 
-      // Trả về đường dẫn tương đối để frontend có thể truy cập
-      // Ví dụ: /uploads/draft_123456789.png
+      // 4. Trả về đường dẫn tương đối để frontend có thể truy cập
       const relativePath = `/uploads/${finalFilename}`;
 
       res.json({
@@ -102,15 +100,37 @@ app.post("/api/save-draft-to-disk", (req, res) => {
 });
 
 // =============================================
+// PHỤC VỤ FRONTEND (index.html)
+// =============================================
+
+// Lấy đường dẫn thư mục gốc của project (cùng cấp với backend và index.html)
+// process.cwd() trả về thư mục mà từ đó bạn chạy lệnh `node server.js`
+const projectRoot = process.cwd();
+
+// Phục vụ file index.html khi người dùng truy cập route gốc (/)
+// Điều này giả định index.html nằm NGAY trong thư mục gốc của project
+// (cùng cấp với thư mục backend)
+app.get("/", (req, res) => {
+  const indexPath = path.join(projectRoot, "index.html");
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // Nếu không tìm thấy index.html, có thể trả về lỗi hoặc một trang mặc định
+    res.status(404).send("File index.html không tìm thấy.");
+  }
+});
+
+// =============================================
 // KHỞI ĐỘNG SERVER
 // =============================================
 app.listen(port, () => {
   console.log(`\n========================================`);
-  // Khi chạy trên Render, URL sẽ không phải là localhost
+  // Log URL cục bộ để kiểm tra
   console.log(`🚀 Backend đang chạy trên cổng ${port}`);
   console.log(`📁 Thư mục lưu ảnh nháp: ${UPLOAD_DIR}`);
+  console.log(`📂 Thư mục gốc project: ${projectRoot}`);
   console.log(
-    `⚠️ Lưu ý trên Render: Ảnh trong thư mục này sẽ bị xóa khi server khởi động lại.`
+    `🌐 Trang chủ Frontend có thể truy cập tại: http://localhost:${port}`
   );
   console.log(`========================================\n`);
 });
